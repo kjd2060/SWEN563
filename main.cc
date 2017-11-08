@@ -20,17 +20,7 @@ pthread_mutex_t lock;					// need to lock here to ensure things are declared pro
 
 
 int current_queue_depth = 0;
-int *arg;
-
-/**
-double current_teller1_customer_wait_time;
-double current_teller2_customer_wait_time;
-double current_teller3_customer_wait_time;
-
-double time_teller1_waited_for_customer;
-double time_teller2_waited_for_customer;
-double time_teller3_waited_for_customer;
-*/
+int arg;
 
 double time_teller_waited_for_customer[NUM_TELLERS];
 double current_teller_customer_wait_time[NUM_TELLERS];
@@ -38,21 +28,6 @@ double current_teller_customer_wait_time[NUM_TELLERS];
 // variables used for metrics later
 int total_customers = 0;
 int max_queue_depth = 0;
-
-/**
-int customers_served_by_teller1 = 0;
-int customers_served_by_teller2 = 0;
-int customers_served_by_teller3 = 0;
-int current_teller1_customer = 0;
-int current_teller2_customer = 0;
-int current_teller3_customer = 0;
-int time_teller1_worked = 0;
-int time_teller2_worked = 0;
-int time_teller3_worked = 0;
-int teller1_longest_transaction = 0;
-int teller2_longest_transaction = 0;
-int teller3_longest_transaction = 0;
-*/
 
 //these values need to be initialized to 0
 int customers_served_by_tellers[NUM_TELLERS] = {};
@@ -62,32 +37,11 @@ int teller_longest_transaction[NUM_TELLERS] = {};
 
 int tellers_total_work_time = 0;
 
-/**
-double time_customers_wait_for_teller1 = 0.0;
-double time_customers_wait_for_teller2 = 0.0;
-double time_customers_wait_for_teller3 = 0.0;
-*/
-
-//#todo initialize these values to 0
 double time_customers_wait_for_teller[NUM_TELLERS] = {};
 
 // timespec struct holds an interval broken into seconds and nanoseconds.  Used to tell 
 struct timespec ts_customer_starts_waiting_in_queue;
 struct timespec ts_customer_leaves_queue_to_teller;
-
-/**
-double time_waited_by_teller1_for_customer = 0.0;
-struct timespec ts_teller1_starts_to_wait_for_customer;
-struct timespec ts_teller1_receives_customer;
-
-double time_waited_by_teller2_for_customer = 0.0;
-struct timespec ts_teller2_starts_to_wait_for_customer;
-struct timespec ts_teller2_receives_customer;
-
-double time_waited_by_teller3_for_customer = 0.0;
-struct timespec ts_teller3_starts_to_wait_for_customer;
-struct timespec ts_teller3_receives_customer;
-*/
 
 struct timespec ts_teller_starts_to_wait_for_customer[NUM_TELLERS];
 struct timespec ts_teller_receives_customer[NUM_TELLERS];
@@ -95,19 +49,7 @@ struct timespec ts_teller_receives_customer[NUM_TELLERS];
 
 double time_waited_by_teller_for_customer[NUM_TELLERS] = {};
 
-/**
-double max_time_waited_by_teller1_customer = 0.0;
-double max_time_waited_by_teller2_customer = 0.0;
-double max_time_waited_by_teller3_customer = 0.0;
-*/
-
 double max_time_waited_by_teller_customer[NUM_TELLERS] = {};
-
-/**
-double max_time_waited_by_teller1_for_customer = 0.0;
-double max_time_waited_by_teller2_for_customer = 0.0;
-double max_time_waited_by_teller3_for_customer = 0.0;
-*/
 
 double max_time_waited_by_teller_for_customer[NUM_TELLERS] = {};
 
@@ -217,13 +159,13 @@ void* tellerThread( void *args )
 
                 Q->pop();																				// grab next customer
 
-                printf("Teller%d is taking a customer        (%d)...\n",arg,current_teller_customer[arg]);
+                printf("Teller%d is taking a customer        (%d)...\n",arg+1,current_teller_customer[arg]);
 
                 msSleep(convertToSimulationTime(current_teller_customer[arg]));                             // Sleep for current customer's transaction time to simulate business
 
                 clock_gettime( CLOCK_REALTIME, &ts_teller_starts_to_wait_for_customer[arg]);             // Start to wait for next customer
                 
-                printf("Teller%d is done with their customer (%d)...\n",arg,current_teller_customer[arg]);
+                printf("Teller%d is done with their customer (%d)...\n",arg+1,current_teller_customer[arg]);
 
                 if (current_teller_customer[arg] > teller_longest_transaction[arg])
 				{
@@ -363,7 +305,8 @@ void* queueThread(void *arg){
  * Also does metrics calculations
 */
 int main(void) {
-    srand(time(NULL));                          // Seed the randomizer
+    int *args = &arg;
+	srand(time(NULL));                          // Seed the randomizer
 
     // Thread Ids...3 teller threads, 1 queue thread
     pthread_t threadQ;
@@ -381,12 +324,12 @@ int main(void) {
 
     // Creating threads
 	pthread_create(&threadQ, NULL, queueThread, NULL);
-	*arg = 0;
-    pthread_create(&thread1, NULL, tellerThread, arg);
-	*arg = 1;
-    pthread_create(&thread2, NULL, tellerThread, arg);
-	*arg = 2;
-    pthread_create(&thread3, NULL, tellerThread, arg);
+	arg = 0;
+    pthread_create(&thread1, NULL, tellerThread, args);
+	arg = 1;
+    pthread_create(&thread2, NULL, tellerThread, args);
+	arg = 2;
+    pthread_create(&thread3, NULL, tellerThread, args);
 
     sleep(42);                                  // Simulate 9AM-4PM business day per assignment
     bankOpen = false;                               // Bank is now Closed
