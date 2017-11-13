@@ -14,12 +14,14 @@
 #define MAX_AMOUNT_OF_CUSTOMERS (SECONDS_OPEN/MIN_ARRIVAL)  // (25200/60) = 420 customers - this assumes that customers come every 60 seconds which is the quickest arrival time for consecutive customers
 #define BILLION (1000000000L)								// used for timing conversions
 #define MILLION (1000000L)
+#define NUM_TELLERS (3)
 
 pthread_mutex_t lock;					// need to lock here to ensure things are declared properly
 
 
 int current_queue_depth = 0;
 
+/**
 double current_teller1_customer_wait_time;
 double current_teller2_customer_wait_time;
 double current_teller3_customer_wait_time;
@@ -27,10 +29,16 @@ double current_teller3_customer_wait_time;
 double time_teller1_waited_for_customer;
 double time_teller2_waited_for_customer;
 double time_teller3_waited_for_customer;
+*/
+
+double current_teller_customer_wait_time[NUM_TELLERS];
+double current_time_teller_waited_for_customer[NUM_TELLERS];
 
 // variables used for metrics later
 int total_customers = 0;
 int max_queue_depth = 0;
+
+/**
 int customers_served_by_teller1 = 0;
 int customers_served_by_teller2 = 0;
 int customers_served_by_teller3 = 0;
@@ -40,14 +48,27 @@ int current_teller3_customer = 0;
 int time_teller1_worked = 0;
 int time_teller2_worked = 0;
 int time_teller3_worked = 0;
-int tellers_total_work_time = 0;
 int teller1_longest_transaction = 0;
 int teller2_longest_transaction = 0;
 int teller3_longest_transaction = 0;
+*/
 
+//these values need to be initialized to 0
+int customers_served_by_tellers[NUM_TELLERS] = {};
+int current_teller_customer[NUM_TELLERS] = {};
+int time_teller_worked[NUM_TELLERS] = {};
+int teller_longest_transaction[NUM_TELLERS] = {};
+
+int tellers_total_work_time = 0;
+
+/**
 double time_customers_wait_for_teller1 = 0.0;
 double time_customers_wait_for_teller2 = 0.0;
 double time_customers_wait_for_teller3 = 0.0;
+*/
+
+//#todo initialize these values to 0
+double time_customers_wait_for_teller[NUM_TELLERS] = {};
 
 // timespec struct holds an interval broken into seconds and nanoseconds.  Used to tell 
 struct timespec ts_customer_starts_waiting_in_queue;
@@ -125,7 +146,7 @@ int getRandomWithRange(int lower, int upper)
  * them for their generated time.  During that time, the thread sleeps to simulate business happening.  Metric calculation is
  * done internally to each thread and tally'd overall.  Mutex used to lock/unlock vars so shared tallys aren't fudged up.
 */
-void* tellerThread1(void *arg)
+void* tellerThread( int teller )
 {
     while(1)
 	{																						    // always checking
@@ -137,7 +158,7 @@ void* tellerThread1(void *arg)
 
             if (Q->size)
 			{                                                                               // if there are customers
-                current_teller1_customer = Q->front();                                                    // Current customer for teller1 is the next one in the queue
+                current_teller_customer[teller] = Q->front();                                                    // Current customer for teller1 is the next one in the queue
 
 				/*
 				 * if the time the customer left the queue is after when he entered it and the teller has served a customer
@@ -149,9 +170,9 @@ void* tellerThread1(void *arg)
 					/* teller1 serving a customer
 					 * structure is used repeatedly.  the wait time is set to the difference between when the customer left the queue to when he entered the queue converted to ns
 					 */
-                    current_teller1_customer_wait_time = (( ts_customer_leaves_queue_to_teller.tv_sec - ts_customer_starts_waiting_in_queue.tv_sec ) + 
+                    current_teller_customer_wait_time[teller] = (( ts_customer_leaves_queue_to_teller.tv_sec - ts_customer_starts_waiting_in_queue.tv_sec ) + 
 						(double)( ts_customer_leaves_queue_to_teller.tv_nsec - ts_customer_starts_waiting_in_queue.tv_nsec ) / (double)BILLION); 
-                    time_customers_wait_for_teller1 += current_teller1_customer_wait_time;              // Update time waited by customers to be seen by teller1
+                    time_customers_wait_for_teller[teller] += current_teller_customer_wait_time[teller];              // Update time waited by customers to be seen by teller1
                 }
 
                 if (current_teller1_customer_wait_time > max_time_waited_by_teller1_customer)

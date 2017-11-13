@@ -6,76 +6,63 @@
 #include <time.h>
 #include <queue>
 
-#define MIN_ARRIVAL (60)                                    // 1 minute, in seconds
-#define MAX_ARRIVAL (240)                                   // 4 minutes, in seconds
-#define MIN_TRANSACTION (30)                                // 30 seconds
-#define MAX_TRANSACTION (480)                               // 8 minutes, in seconds
-#define SECONDS_OPEN (25200)                                // 7 hours (9am to 4pm)
-#define MAX_AMOUNT_OF_CUSTOMERS (SECONDS_OPEN/MIN_ARRIVAL)  // (25200/60) = 420 customers - this assumes that customers come every 60 seconds which is the quickest arrival time for consecutive customers
-#define BILLION (1000000000L)								// used for timing conversions
+#define MIN_ARRIVAL (60)
+// 1 minute, in seconds
+#define MAX_ARRIVAL (240)
+// 4 minutes, in seconds
+#define MIN_TRANSACTION (30)
+// 30 seconds
+#define MAX_TRANSACTION (480)
+// 8 minutes, in seconds
+#define SECONDS_OPEN (25200)
+// 7 hours (9am to 4pm)
+#define MAX_AMOUNT_OF_CUSTOMERS (SECONDS_OPEN/MIN_ARRIVAL)
+// (25200/60) = 420 customers - this assumes that customers come every 60 seconds which is the quickest arrival time for consecutive customers
+#define BILLION (1000000000L)
+// used for timing conversions
 #define MILLION (1000000L)
+#define NUM_TELLERS (3)
 
 pthread_mutex_t lock;					// need to lock here to ensure things are declared properly
 
-
 int current_queue_depth = 0;
+int arg;
+unsigned int i;
 
-double current_teller1_customer_wait_time;
-double current_teller2_customer_wait_time;
-double current_teller3_customer_wait_time;
-
-double time_teller1_waited_for_customer;
-double time_teller2_waited_for_customer;
-double time_teller3_waited_for_customer;
+double time_teller_waited_for_customer[NUM_TELLERS];
+double current_teller_customer_wait_time[NUM_TELLERS];
 
 // variables used for metrics later
 int total_customers = 0;
 int max_queue_depth = 0;
-int customers_served_by_teller1 = 0;
-int customers_served_by_teller2 = 0;
-int customers_served_by_teller3 = 0;
-int current_teller1_customer = 0;
-int current_teller2_customer = 0;
-int current_teller3_customer = 0;
-int time_teller1_worked = 0;
-int time_teller2_worked = 0;
-int time_teller3_worked = 0;
-int tellers_total_work_time = 0;
-int teller1_longest_transaction = 0;
-int teller2_longest_transaction = 0;
-int teller3_longest_transaction = 0;
+int average_transaction_time = 0;
 
-double time_customers_wait_for_teller1 = 0.0;
-double time_customers_wait_for_teller2 = 0.0;
-double time_customers_wait_for_teller3 = 0.0;
+int customers_served_by_tellers[NUM_TELLERS] = {};
+int current_teller_customer[NUM_TELLERS] = {};
+int time_teller_worked[NUM_TELLERS] = {};
+int teller_longest_transaction[NUM_TELLERS] = {};
+
+int tellers_total_work_time = 0;
+int max_transaction_time = 0;
+
+double time_customers_wait_for_teller[NUM_TELLERS] = {};
+double average_queue_time = 0;
 
 // timespec struct holds an interval broken into seconds and nanoseconds.  Used to tell 
 struct timespec ts_customer_starts_waiting_in_queue;
 struct timespec ts_customer_leaves_queue_to_teller;
 
-double time_waited_by_teller1_for_customer = 0.0;
-struct timespec ts_teller1_starts_to_wait_for_customer;
-struct timespec ts_teller1_receives_customer;
+struct timespec ts_teller_starts_to_wait_for_customer[NUM_TELLERS];
+struct timespec ts_teller_receives_customer[NUM_TELLERS];
 
-double time_waited_by_teller2_for_customer = 0.0;
-struct timespec ts_teller2_starts_to_wait_for_customer;
-struct timespec ts_teller2_receives_customer;
 
-double time_waited_by_teller3_for_customer = 0.0;
+double time_waited_by_teller_for_customer[NUM_TELLERS] = {};
+double average_teller_wait = 0;
+double max_time_waited_by_teller_customer[NUM_TELLERS] = {};
+double max_time_waited_by_teller_for_customer[NUM_TELLERS] = {};
 
-struct timespec ts_teller3_starts_to_wait_for_customer;
-struct timespec ts_teller3_receives_customer;
-
-double max_time_waited_by_teller1_customer = 0.0;
-double max_time_waited_by_teller2_customer = 0.0;
-double max_time_waited_by_teller3_customer = 0.0;
-
-double max_time_waited_by_teller1_for_customer = 0.0;
-double max_time_waited_by_teller2_for_customer = 0.0;
-double max_time_waited_by_teller3_for_customer = 0.0;
-
-double total_time_customers_waited_for_all_tellers = 0;
-double total_time_waited_by_all_tellers_for_customer = 0;
+double total_time_customers_waited_for_all_tellers;
+double total_time_waited_by_all_tellers_for_customer;
 
 bool bankOpen = false;
 std::queue<int> *Q = new std::queue<int>;
@@ -108,15 +95,17 @@ double msRealToSim(double ms)
 	return (ms / 100.0)*60.0;
 }
 
-/* This generates a random number within range of the passed parameters inclusively, while
- * maintaining a uniform distribution.  Algorithm from some research regarding generating
- * uniform int distributions
+/* This generates a random number within range of the passed parameters inclusively, while overall
+   producing a uniform distribution of generated values.
  */
 int getRandomWithRange(int lower, int upper)
 {
 	double myRand = std::rand()/(1.0 + RAND_MAX);
 	int range = upper - lower + 1;
 	int randScaled = (myRand * range) + lower;
+	if ( randScaled > max_transaction_time ){
+		max_transaction_time = randScaled;
+	}
 	return randScaled;
 }
 
@@ -127,168 +116,186 @@ int getRandomWithRange(int lower, int upper)
  * them for their generated time.  During that time, the thread sleeps to simulate business happening.  Metric calculation is
  * done internally to each thread and tally'd overall.  Mutex used to lock/unlock vars so shared tallys aren't fudged up.
 */
-void* tellerThread1(void *arg)
+void* tellerThread( void *args )
 {
+	int arg = *((int *) args);
+	int teller_number = arg+1;
     while(1)
-	{																						    // always checking
+	{
+    	// always checking
         if (bankOpen)
-		{																					// Bank is open
-            clock_gettime( CLOCK_REALTIME, &ts_customer_leaves_queue_to_teller);                        // Fetch current time - customer leaving queue to teller1
+		{
+        	// Bank is open
+            clock_gettime( CLOCK_REALTIME, &ts_customer_leaves_queue_to_teller);
+            // Fetch current time - customer leaving queue to teller1
 
-            pthread_mutex_lock( &lock );																// lock to service variables
+            pthread_mutex_lock( &lock );
+            // lock to service variables
 
             if (Q->size() > 0)
-			{                                                                               // if there are customers
-                current_teller1_customer = Q->front();                                                    // Current customer for teller1 is the next one in the queue
+			{
+            	// if there are customers
+                current_teller_customer[arg] = Q->front();
+                // Current customer for teller1 is the next one in the queue
 
 				/*
 				 * if the time the customer left the queue is after when he entered it and the teller has served a customer
 				*/
                 if (ts_customer_leaves_queue_to_teller.tv_sec + ts_customer_leaves_queue_to_teller.tv_nsec > // exact time customer left queue
 					ts_customer_starts_waiting_in_queue.tv_sec + ts_customer_starts_waiting_in_queue.tv_nsec && // exact time customer started waiting in queue
-					customers_served_by_teller1 > 0)
+					customers_served_by_tellers[arg] > 0)
 				{	
 					/* teller1 serving a customer
 					 * structure is used repeatedly.  the wait time is set to the difference between when the customer left the queue to when he entered the queue converted to ns
 					 */
-                    current_teller1_customer_wait_time = (( ts_customer_leaves_queue_to_teller.tv_sec - ts_customer_starts_waiting_in_queue.tv_sec ) + 
+                    current_teller_customer_wait_time[arg] = (( ts_customer_leaves_queue_to_teller.tv_sec - ts_customer_starts_waiting_in_queue.tv_sec ) +
 						(double)( ts_customer_leaves_queue_to_teller.tv_nsec - ts_customer_starts_waiting_in_queue.tv_nsec ) / (double)BILLION); 
-                    time_customers_wait_for_teller1 += current_teller1_customer_wait_time;              // Update time waited by customers to be seen by teller1
+                    time_customers_wait_for_teller[arg] += current_teller_customer_wait_time[arg];
+                    // Update time waited by customers to be seen by teller1
                 }
 
-                if (current_teller1_customer_wait_time > max_time_waited_by_teller1_customer)
+                if (current_teller_customer_wait_time[arg] > max_time_waited_by_teller_customer[arg])
 				{
-                    max_time_waited_by_teller1_customer = current_teller1_customer_wait_time;           // Update max time waited by customer
+                    max_time_waited_by_teller_customer[arg] = current_teller_customer_wait_time[arg];
+                    // Update max time waited by customer
                 }
 
-                clock_gettime( CLOCK_REALTIME, &ts_teller1_receives_customer);                       // End wait for customer - take from queue
+                clock_gettime( CLOCK_REALTIME, &ts_teller_receives_customer[arg]);
+                // End wait for customer - take from queue
 
-                if (ts_teller1_receives_customer.tv_sec + ts_teller1_receives_customer.tv_nsec > ts_teller1_starts_to_wait_for_customer.tv_sec + 
-					ts_teller1_starts_to_wait_for_customer.tv_nsec && customers_served_by_teller1 > 0)
+                if (ts_teller_receives_customer[arg].tv_sec + ts_teller_receives_customer[arg].tv_nsec > ts_teller_starts_to_wait_for_customer[arg].tv_sec +
+					ts_teller_starts_to_wait_for_customer[arg].tv_nsec && customers_served_by_tellers[arg] > 0)
 				{
-                    time_teller1_waited_for_customer = (( ts_teller1_receives_customer.tv_sec - ts_teller1_starts_to_wait_for_customer.tv_sec ) + 
-						(double)( ts_teller1_receives_customer.tv_nsec - ts_teller1_starts_to_wait_for_customer.tv_nsec ) / (double)BILLION);
-                    time_waited_by_teller1_for_customer += time_teller1_waited_for_customer;            // Update time waited by teller1 for customer
+                    time_teller_waited_for_customer[arg] = (( ts_teller_receives_customer[arg].tv_sec - ts_teller_starts_to_wait_for_customer[arg].tv_sec ) +
+						(double)( ts_teller_receives_customer[arg].tv_nsec - ts_teller_starts_to_wait_for_customer[arg].tv_nsec ) / (double)BILLION);
+                    time_waited_by_teller_for_customer[arg] += time_teller_waited_for_customer[arg];
+                    // Update time waited by teller1 for customer
                 }
 
-                if (time_teller1_waited_for_customer > max_time_waited_by_teller1_for_customer)
+                if (time_teller_waited_for_customer[arg] > max_time_waited_by_teller_for_customer[arg])
 				{
-                    max_time_waited_by_teller1_for_customer = time_teller1_waited_for_customer;         // Update max time of teller1 waiting for customer if needed
+                    max_time_waited_by_teller_for_customer[arg] = time_teller_waited_for_customer[arg];
+                    // Update max time of teller1 waiting for customer if needed
                 }
 
-                pthread_mutex_unlock( &lock );															// no longer using shared resources, unlock them
+                pthread_mutex_unlock( &lock );
+                // no longer using shared resources, unlock them
 
-                Q->pop(); // grab next customer
+                Q->pop();
+                // grab next customer
 
-                printf("Teller1 is taking a customer        (%d)...\n",current_teller1_customer);
+                printf("Teller%d is taking a customer        (%ds)...\n",teller_number,current_teller_customer[arg]);
 
-                msSleep(convertToSimulationTime(current_teller1_customer));                             // Sleep for current customer's transaction time to simulate business
+                msSleep(convertToSimulationTime(current_teller_customer[arg]));
+                // Sleep for current customer's transaction time to simulate business
 
-                clock_gettime( CLOCK_REALTIME, &ts_teller1_starts_to_wait_for_customer);             // Start to wait for next customer
+                clock_gettime( CLOCK_REALTIME, &ts_teller_starts_to_wait_for_customer[arg]);
+                // Start to wait for next customer
                 
-                printf("Teller1 is done with their customer (%d)...\n",current_teller1_customer);
+                printf("Teller%d is done with their customer (%ds)...\n",teller_number,current_teller_customer[arg]);
 
-                if (current_teller1_customer > teller1_longest_transaction)
+                if (current_teller_customer[arg] > teller_longest_transaction[arg])
 				{
-                    teller1_longest_transaction = current_teller1_customer;                             // Update the max transaction time 
+                    teller_longest_transaction[arg] = current_teller_customer[arg];
+                    // Update the max transaction time
                 }
 
-                time_teller1_worked += current_teller1_customer;                                        // Increment the time worked by teller1
-                customers_served_by_teller1 += 1;                                                       // Increment the number of customers teller1 has processed
+                time_teller_worked[arg] += current_teller_customer[arg];
+                // Increment the time worked by teller1
+                customers_served_by_tellers[arg] += 1;
+                // Increment the number of customers teller1 has processed
             }
-            else                          // Bank is open but no customers!
+            else
+            	// Bank is open but no customers!
 			{                                                                                       
                 pthread_mutex_unlock( &lock );
             }
         }
         else
-		{                                                                                           // Bank closed
-            clock_gettime( CLOCK_REALTIME, &ts_customer_leaves_queue_to_teller);                     // Fetch current time - customer leaving queue to teller1
+		{
+        	// Bank closed
+            clock_gettime( CLOCK_REALTIME, &ts_customer_leaves_queue_to_teller);
+            // Fetch current time - customer leaving queue to teller1
             pthread_mutex_lock( &lock );
             if (Q->size() > 0)
-			{                                                                               // still have customers, service them
-                current_teller1_customer = Q->front();                                                    // Current customer for teller1 is the next one in the queue
+			{
+            	// still have customers, service them
+                current_teller_customer[arg] = Q->front();
+                // Current customer for teller1 is the next one in the queue
                 
                 if (ts_customer_leaves_queue_to_teller.tv_sec + ts_customer_leaves_queue_to_teller.tv_nsec > 
 					ts_customer_starts_waiting_in_queue.tv_sec + ts_customer_starts_waiting_in_queue.tv_nsec && 
-					customers_served_by_teller1 > 0)
+					customers_served_by_tellers[arg] > 0)
 				{
-                    current_teller1_customer_wait_time = (( ts_customer_leaves_queue_to_teller.tv_sec - ts_customer_starts_waiting_in_queue.tv_sec ) + 
-						(double)( ts_customer_leaves_queue_to_teller.tv_nsec - ts_customer_starts_waiting_in_queue.tv_nsec ) / (double)BILLION);
-                    time_customers_wait_for_teller1 += current_teller1_customer_wait_time;              // Update time waited by customers to be seen by teller1
+                    current_teller_customer_wait_time[arg] = (( ts_customer_leaves_queue_to_teller.tv_sec -
+                    		ts_customer_starts_waiting_in_queue.tv_sec ) +
+                    		(double)( ts_customer_leaves_queue_to_teller.tv_nsec -
+                    				ts_customer_starts_waiting_in_queue.tv_nsec ) / (double)BILLION);
+
+                    time_customers_wait_for_teller[arg] += current_teller_customer_wait_time[arg];
+                    // Update time waited by customers to be seen by teller1
                 }
 
-                if (current_teller1_customer_wait_time > max_time_waited_by_teller1_customer)
+                if (current_teller_customer_wait_time[arg] > max_time_waited_by_teller_customer[arg])
 				{
-                    max_time_waited_by_teller1_customer = current_teller1_customer_wait_time;           // Update max time waited by customer to be seen by teller1 if needed
+                    max_time_waited_by_teller_customer[arg] = current_teller_customer_wait_time[arg];
+                    // Update max time waited by customer to be seen by teller1 if needed
                 }
 
-                clock_gettime( CLOCK_REALTIME, &ts_teller1_receives_customer);                       // End wait for customer - take from queue
-                if (ts_teller1_receives_customer.tv_sec + ts_teller1_receives_customer.tv_nsec > 
-					ts_teller1_starts_to_wait_for_customer.tv_sec + ts_teller1_starts_to_wait_for_customer.tv_nsec && 
-					customers_served_by_teller1 > 0)
+                clock_gettime( CLOCK_REALTIME, &ts_teller_receives_customer[arg]);
+                // End wait for customer - take from queue
+
+                if (ts_teller_receives_customer[arg].tv_sec + ts_teller_receives_customer[arg].tv_nsec >
+					ts_teller_starts_to_wait_for_customer[arg].tv_sec + ts_teller_starts_to_wait_for_customer[arg].tv_nsec &&
+					customers_served_by_tellers[arg] > 0)
 				{
-                    time_teller1_waited_for_customer = (( ts_teller1_receives_customer.tv_sec - ts_teller1_starts_to_wait_for_customer.tv_sec ) + 
-						(double)( ts_teller1_receives_customer.tv_nsec - ts_teller1_starts_to_wait_for_customer.tv_nsec ) / (double)BILLION);
-                    time_waited_by_teller1_for_customer += time_teller1_waited_for_customer;            // Update time waited by teller1 for customer
+                    time_teller_waited_for_customer[arg] = (( ts_teller_receives_customer[arg].tv_sec -
+                    		ts_teller_starts_to_wait_for_customer[arg].tv_sec ) +
+                    		(double)( ts_teller_receives_customer[arg].tv_nsec -
+                    				ts_teller_starts_to_wait_for_customer[arg].tv_nsec ) / (double)BILLION);
+
+                    time_waited_by_teller_for_customer[arg] += time_teller_waited_for_customer[arg];
+                    // Update time waited by teller1 for customer
                 }
 
-                if (time_teller1_waited_for_customer > max_time_waited_by_teller1_for_customer)
+                if (time_teller_waited_for_customer[arg] > max_time_waited_by_teller_for_customer[arg])
 				{
-                    max_time_waited_by_teller1_for_customer = time_teller1_waited_for_customer;         // Update max time of teller1 waiting for customer if needed
+                    max_time_waited_by_teller_for_customer[arg] = time_teller_waited_for_customer[arg];
+                    // Update max time of teller1 waiting for customer if needed
                 }
 
                 pthread_mutex_unlock( &lock );
 
-				Q->pop();                                                                            // Next customer in queue taken to conduct business
+				Q->pop();
+				// Next customer in queue taken to conduct business
 
-                printf("Teller1 is taking a customer        (%d)...\n",current_teller1_customer);
+                printf("Teller%d is taking a customer        (%ds)...\n",teller_number,current_teller_customer[arg]);
 
-                msSleep(convertToSimulationTime(current_teller1_customer));                             // Sleep for the current customer's transaction time to simulate business
+                msSleep(convertToSimulationTime(current_teller_customer[arg]));
+                // Sleep for the current customer's transaction time to simulate business
 
-                clock_gettime( CLOCK_REALTIME, &ts_teller1_starts_to_wait_for_customer);             // Start to wait for next customer
+                clock_gettime( CLOCK_REALTIME, &ts_teller_starts_to_wait_for_customer[arg]);
+                // Start to wait for next customer
                 
-                printf("Teller1 is done with their customer (%d)...\n",current_teller1_customer);
+                printf("Teller%d is done with their customer (%ds)...\n",teller_number,current_teller_customer[arg]);
 
-                if (current_teller1_customer > teller1_longest_transaction)
+                if (current_teller_customer[arg] > teller_longest_transaction[arg])
 				{
-                    teller1_longest_transaction = current_teller1_customer;                             // Update the max transaction time
+                    teller_longest_transaction[arg] = current_teller_customer[arg];
+                    // Update the max transaction time
                 }
 
-                time_teller1_worked += current_teller1_customer;                                        // Increment the time worked by teller1
-                customers_served_by_teller1 += 1;                                                       // Increment the number of customers teller1 has processed
-			}
-            else{                                                                                       // Bank closed and no customers!
+                time_teller_worked[arg] += current_teller_customer[arg];
+                // Increment the time worked by teller1
+                customers_served_by_tellers[arg] += 1;
+                // Increment the number of customers teller1 has processed
+            }
+            else{
+            	// Bank closed and no customers!
                 pthread_mutex_unlock( &lock );
-                return NULL;
+                break;
             }
         }
-    }
-    return NULL;
-}
-
-void* tellerThread2(void *arg)
-{
-    while(1)
-	{
-        if (bankOpen)
-		{                                                                             // Bank is open
-            
-        }
-        break;
-    }
-    return NULL;
-}
-
-void* tellerThread3(void *arg)
-{
-    while(1)
-	{
-        if (bankOpen)
-		{                                                                             // Bank is open
-            
-        }
-        break;
     }
     return NULL;
 }
@@ -302,19 +309,28 @@ void* queueThread(void *arg){
     int arrivalTime = 0;
     int transactionTime = 0;
     while(1){
-        if (bankOpen){                                                             // Check if bank open
-            arrivalTime = getRandomWithRange(MIN_ARRIVAL, MAX_ARRIVAL);                 // Generate random arrival time of customer
-            transactionTime = getRandomWithRange(MIN_TRANSACTION, MAX_TRANSACTION);     // Generate random transaction time of customer
-            msSleep(convertToSimulationTime(arrivalTime));                              // wait for customer to arrive before queueing
-			Q->push(transactionTime);                                                // push transaction time of the customer to the queue
-            clock_gettime( CLOCK_REALTIME, &ts_customer_starts_waiting_in_queue);    // Fetch current time - used to calculate when the customer was queued and how long they'll wait to be seen
+        if (bankOpen){
+        	// Check if bank open
+            arrivalTime = getRandomWithRange(MIN_ARRIVAL, MAX_ARRIVAL);
+            // Generate random arrival time of customer
+            transactionTime = getRandomWithRange(MIN_TRANSACTION, MAX_TRANSACTION);
+            // Generate random transaction time of customer
+            msSleep(convertToSimulationTime(arrivalTime));
+            // wait for customer to arrive before queueing
+			Q->push(transactionTime);
+			// push transaction time of the customer to the queue
+            clock_gettime( CLOCK_REALTIME, &ts_customer_starts_waiting_in_queue);
+            // Fetch current time - used to calculate when the customer was queued and how long they'll wait to be seen
             printf("Size of line: %d\n",Q->size());
-            current_queue_depth = Q->size();                                              // Check size of queue
-            if (current_queue_depth > max_queue_depth){                                 // Update max queue size with current if needed
+            current_queue_depth = Q->size();
+            // Check size of queue
+            if (current_queue_depth > max_queue_depth){
+            	// Update max queue size with current if needed
                 max_queue_depth = current_queue_depth;
             }
         }
-        else{                                                                           // bank is closed
+        else{
+        	// bank is closed
             break;
         }
     }
@@ -323,11 +339,13 @@ void* queueThread(void *arg){
 
 /* Entry point
  * Seed the randomizer, create the thread IDs, initialize the mutex and open the bank for business
- * Spin up threads for queue and tellers, then sleep for the time necessary ((7 hours business day *60 minutes/hr) = 420 minutes*.1 second = 42
+ * Spin up threads for queue and tellers, then sleep for the time necessary
+ * ((7 hours business day *60 minutes/hr) = 420 minutes*.1 second = 42
  * Also does metrics calculations
 */
 int main(void) {
-    srand(time(NULL));                          // Seed the randomizer
+    int *args = &arg;
+	srand(time(NULL));                          // Seed the randomizer
 
     // Thread Ids...3 teller threads, 1 queue thread
     pthread_t threadQ;
@@ -335,23 +353,29 @@ int main(void) {
     pthread_t thread2;
     pthread_t thread3;
 
-    if (pthread_mutex_init(&lock, NULL) != 0){  // Check mutex initialization
+    if (pthread_mutex_init(&lock, NULL) != 0){
+    	// Check mutex initialization
         printf("Mutex init failed\n");
         return 1;
     }
 
     printf("\nBank is now open!\n\n");
-    bankOpen = true;                               // Bank is now Open
+    bankOpen = true;
+    // Bank is now Open
 
     // Creating threads
-
 	pthread_create(&threadQ, NULL, queueThread, NULL);
-    pthread_create(&thread1, NULL, tellerThread1, NULL);
-    pthread_create(&thread2, NULL, tellerThread2, NULL);
-    pthread_create(&thread3, NULL, tellerThread3, NULL);
+	arg = 0;
+    pthread_create(&thread1, NULL, tellerThread, args);
+	arg = 1;
+    pthread_create(&thread2, NULL, tellerThread, args);
+	arg = 2;
+    pthread_create(&thread3, NULL, tellerThread, args);
 
-    sleep(10);                                  // Simulate 9AM-4PM business day per assignment - 42 = full day
-    bankOpen = false;                               // Bank is now Closed
+    sleep(42);
+    // Simulate 9AM-4PM business day per assignment
+    bankOpen = false;
+    // Bank is now Closed
     
     printf("Bank is now closed!\n\n");
     printf("People in queue still: %d\n",Q->size());
@@ -361,32 +385,58 @@ int main(void) {
     pthread_join(thread2, NULL);
     pthread_join(thread3, NULL);
 
-
-    total_customers = (customers_served_by_teller1 + customers_served_by_teller2 + customers_served_by_teller3);
-    tellers_total_work_time = (time_teller1_worked + time_teller2_worked + time_teller3_worked);
+    total_customers = (customers_served_by_tellers[0] + customers_served_by_tellers[1] + customers_served_by_tellers[2]);
+    tellers_total_work_time = (time_teller_worked[0] + time_teller_worked[1] + time_teller_worked[2]);
+    average_transaction_time = tellers_total_work_time/total_customers;
 
     printf("Total customers served: (%d)\nTeller work time: (%d)\n", total_customers, tellers_total_work_time);
+    //total customers served
 
-    max_time_waited_by_teller1_customer = msRealToSim(max_time_waited_by_teller1_customer*1000);
-	max_time_waited_by_teller1_for_customer = msRealToSim(max_time_waited_by_teller1_for_customer * 1000);
+    printf("Average Transaction Time: (%ds)\n", average_transaction_time);
+    printf("Maximum Transaction Time: (%ds)\n", max_transaction_time);
 
-	printf("Maximum time customer waited for teller1: %f \nMaximum time teller1 waited for customer %f\n", max_time_waited_by_teller1_customer, max_time_waited_by_teller1_for_customer);
+    for(i = 0; i < sizeof(time_customers_wait_for_teller); i++){
+    	average_queue_time += time_customers_wait_for_teller[i];
+    }
+    average_queue_time /= total_customers;
+    printf("Average Queue Time: (%fs)\n", average_queue_time);
+
+    for(i = 0; i < sizeof(time_teller_waited_for_customer); i++){
+    	average_teller_wait += time_teller_waited_for_customer[i];
+    }
+    average_teller_wait /= total_customers;
+    printf("Average Teller Wait: (%fs)\n", average_teller_wait);
+
+    max_time_waited_by_teller_customer[0] = msRealToSim(max_time_waited_by_teller_customer[0]*1000);
+	max_time_waited_by_teller_for_customer[0] = msRealToSim(max_time_waited_by_teller_for_customer[0] * 1000);
+
+	printf("Maximum time customer waited for teller1: %fs \nMaximum time teller1 waited for customer %fs\n",
+			max_time_waited_by_teller_customer[0], max_time_waited_by_teller_for_customer[0]);
+
+    max_time_waited_by_teller_customer[1] = msRealToSim(max_time_waited_by_teller_customer[1]*1000);
+	max_time_waited_by_teller_for_customer[1] = msRealToSim(max_time_waited_by_teller_for_customer[1] * 1000);
+
+	printf("Maximum time customer waited for teller2: %fs \nMaximum time teller2 waited for customer %fs\n",
+			max_time_waited_by_teller_customer[1], max_time_waited_by_teller_for_customer[1]);
 
 
-    max_time_waited_by_teller2_customer = msRealToSim(max_time_waited_by_teller2_customer*1000);
-	max_time_waited_by_teller2_for_customer = msRealToSim(max_time_waited_by_teller2_for_customer * 1000);
+    max_time_waited_by_teller_customer[2] = msRealToSim(max_time_waited_by_teller_customer[2]*1000);
+    max_time_waited_by_teller_for_customer[2] = msRealToSim(max_time_waited_by_teller_for_customer[2]*1000);
 
-    max_time_waited_by_teller3_customer = msRealToSim(max_time_waited_by_teller3_customer*1000);
-    max_time_waited_by_teller3_for_customer = msRealToSim(max_time_waited_by_teller3_for_customer*1000);
+	printf("Maximum time customer waited for teller3: %fs \nMaximum time teller3 waited for customer %fs\n",
+			max_time_waited_by_teller_customer[2], max_time_waited_by_teller_for_customer[2]);
 
-    total_time_customers_waited_for_all_tellers = msRealToSim((time_customers_wait_for_teller1 + time_customers_wait_for_teller2 + time_customers_wait_for_teller3)*1000);
-    total_time_waited_by_all_tellers_for_customer = msRealToSim((time_waited_by_teller1_for_customer + time_waited_by_teller2_for_customer + time_waited_by_teller3_for_customer)*1000);
+    total_time_customers_waited_for_all_tellers = msRealToSim((time_customers_wait_for_teller[0] +
+    		time_customers_wait_for_teller[1] + time_customers_wait_for_teller[2])*1000);
+    total_time_waited_by_all_tellers_for_customer = msRealToSim((time_waited_by_teller_for_customer[0] +
+    		time_waited_by_teller_for_customer[1] + time_waited_by_teller_for_customer[2])*1000);
     
-	printf("Total time customer waited for tellers: %f \Total time tellers waited for customers %f\n",
-			total_time_customers_waited_for_all_tellers, total_time_waited_by_all_tellers_for_customer);
-
-    // need to figure out how to report all the variables
+    printf("Total time customer waited for tellers: %fs \nTotal time tellers waited for customers %fs\n",
+    		total_time_customers_waited_for_all_tellers, total_time_waited_by_all_tellers_for_customer);
     
+    printf("Maximum Queue Depth: %d \n", max_queue_depth);
+
+
 	// destroy the mutex lock
     pthread_mutex_destroy(&lock);
     return 0;
