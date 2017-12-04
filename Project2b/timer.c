@@ -43,7 +43,7 @@ void pwmInit(){
     // gets access to device register.  Reg. length is 8, and want to use Digital I/O port C
     uintptr_t ctrl = mmap_device_io(8, BASE + 10); 
     
-    if(ctrlHandle == MAP_DEVICE_FAILED)
+    if(ctrl == MAP_DEVICE_FAILED)
     {
         perror("map control register fails");
     }
