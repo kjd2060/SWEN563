@@ -16,10 +16,10 @@
 
 #define PWM0 (0)
 #define PWM1 (1)
-#define IO_PORT_SIZE (8)
-#define BASE (0x280)
-#define NUMOFPWM (2)
-#define NANOSECOND (1000000000)
+#define IO_PORT_SIZE (8) // port size for digital io ports on our platform
+#define BASE (0x280)  // default base address
+#define NUMOFPWM (2)  // need 2 pwms
+#define NANOSECOND (1000000000) // I think we'll need this after looking through the ref manual
 
 void pwmInit();
 void * pwmThread(void *args);
