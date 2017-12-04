@@ -22,7 +22,7 @@
 #define NANOSECOND (1000000000)
 
 void pwmInit();
-void * pwmThread(void *arguments);
-void changePWM(uint8_t PWMNO, uint32_t pwmValue);
+void * pwmThread(void *args);
+void changePWM(uint8_t pwmNum, uint32_t pwmVal);
 
 #endif
