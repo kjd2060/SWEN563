@@ -1,0 +1,6 @@
+check http://www.se.rit.edu/~swen-563/resources/helios/Helios%20User%20Manual.pdf, aka main page -> resources -> helios user manual (at the bottom)
+
+section 22.1, counter 0 details generating a pulse.  Generates on port C pin 24 when DIOCTR is 1.  
+
+section 14, data acquisition and I/O register map details setting up the ports for output.
+
