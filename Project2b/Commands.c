@@ -9,6 +9,7 @@
 
 int servo_number;
 int override_flag = 0;
+int wait_time = 1;
 int in_loop[2] = {0, 0};
 enum status program_status = status_running;
 char line[256];
@@ -102,39 +103,53 @@ void Init_Servos(){
 	}
 }
 
+void Read_Line(char *str){
+
+	int index = 1;
+	while( input_byte != '>' ){
+		input_byte = getch();
+		if ( input_byte == 'x' || input_byte == 'X' ){
+			break;
+		}
+		str[index] = input_byte;
+		index++;
+	}
+	str[index++] = '\0';
+	Write_Line("\r\n>");
+}
+
 void Move_Buffering( int moves ){
 
-	long delay = ( moves ) * 400000;
-	// set delay of 400ms per movement to microseconds
+	int delay = ( moves ) * 400;
+	// set delay of 400ms per movement to milliseconds
 	//	sprintf(output, "waiting %lu \r\n", delay);
 	//	Write_Line(output);
-	USART_Delay( delay );
+	delay( delay );
+	program_status = status_running;
 
 }
 
 void Run_State(){
 	//main function that handles the servo states and the program status
-	Write_Line("\r\n>");
+	printf("\r\n>");
 	while( program_status != status_done ){
 		int i;
 		char input[1];
 		int num_servos_done = 0;
 
-		if (( USART2->ISR & USART_ISR_RXNE )){
-			//if the RXNE interrupt has been flagged
+		if ( kbhit() ){
 			//if it has the user has inputted something
 			override_flag = 1;
-
-
 		}
 
 		if ( override_flag == 1 ){
 			//as the input is 1 char, it needs to be added to the start of the input
 			program_status = status_input_read;
-			rxByte = ((uint8_t)(USART2->RDR & 0xFF));
+			rxByte = getch();
 			input[0] = rxByte;
 			line[0] = rxByte;
-			Write_Line(input);
+			//Write_Line(input);
+			printf(input);
 		}
 
 		 switch( program_status ){
@@ -142,8 +157,6 @@ void Run_State(){
 			case status_input_read:
 				//read in override input and handle it
 				Read_Line(line);
-				USART2->RQR |= USART_RQR_RXFRQ;
-				//clear interrupt flag
 
 				if ( line[6] == '>' ){
 					//checking for correct format
@@ -170,7 +183,7 @@ void Run_State(){
 
 			case status_running:
 
-				Update_LEDs();
+				//Update_LEDs();
 				for ( servo_number = 0; servo_number < NUM_SERVOS; servo_number++ ){
 
 					if ( servos[servo_number].servo_state == state_running ){
@@ -203,6 +216,8 @@ void Run_State(){
 						//error and pause states do nothing
 					}
 				}
+			 case status_buffering:
+				 Move_Buffering(wait_time);
 		}
 	}
 }
@@ -233,6 +248,9 @@ void process_recipe( int index_number, int servo ){
 		//clearing the opcode to get just the value
 		value = temp;
 		delay_cycles = abs(servos[servo].position - value);
+		if (delay_cycles > wait_time){
+			wait_time = delay_cycles;
+		}
 		servos[servo].position = value;
 		//	sprintf(output, "moving servo %d to %d\r\n", servo, servos[servo].position);
 		//	Write_Line(output);
@@ -242,7 +260,7 @@ void process_recipe( int index_number, int servo ){
 		//	sprintf(output, "servo moving %d positions\r\n", delay_cycles);
 		//	Write_Line(output);
 		//caluculate the difference in positions to set delay
-		Move_Buffering(delay_cycles);
+		program_status = status_buffering;
 
 	}
 
@@ -378,8 +396,7 @@ void Turn_Left( int servo ){
 	servos[servo].position++;
 	//	sprintf(output, "moving servo %d left to %d\r\n", servo, servos[servo].position);
 	//	Write_Line(output);
-	pulse_width = SMALLEST_WIDTH + servos[servo].position*STEP_INTERVAL;
-	Change_Width( pulse_width, servo );
+	Change_Width( pulse_width, servo ); // need to change this to the QNX version
 }
 
 void Turn_Right( int servo ){
@@ -387,8 +404,7 @@ void Turn_Right( int servo ){
 	servos[servo].position--;
 	//	sprintf(output, "moving servo %d right to %d\r\n", servo, servos[servo].position);
 	//	Write_Line(output);
-	pulse_width = SMALLEST_WIDTH + servos[servo].position*STEP_INTERVAL;
-	Change_Width( pulse_width, servo );
+	Change_Width( pulse_width, servo ); // need to change this to the QNX version
 }
 
 
