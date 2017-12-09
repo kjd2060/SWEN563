@@ -42,6 +42,7 @@ enum status
 {
 	status_input_read,
 	status_running,
+	status_buffering,
 	status_done
 
 } ;
