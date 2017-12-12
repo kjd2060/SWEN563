@@ -103,7 +103,7 @@ void Init_Servos(){
 	}
 }
 
-void Read_Line(char *str){
+/*void Read_Line(char *str){
 
 	int index = 1;
 	while( input_byte != '>' ){
@@ -116,7 +116,7 @@ void Read_Line(char *str){
 	}
 	str[index++] = '\0';
 	Write_Line("\r\n>");
-}
+}*/
 
 void Move_Buffering( int moves ){
 
@@ -129,35 +129,34 @@ void Move_Buffering( int moves ){
 
 }
 
+void *Override_Thread(){
+    int index = 0;
+    while(1){
+        while( c != '>' || c != 'x' ) {
+	    c = getchar();
+            line[index] = c;
+        }
+	line[index++] = '\0'
+        input_fed = 1;
+    }
+}
+
 void Run_State(){
 	//main function that handles the servo states and the program status
 	printf("\r\n>");
+	pthread_create (NULL, NULL, Override_Thread, NULL);
 	while( program_status != status_done ){
 		int i;
-		char input[1];
 		int num_servos_done = 0;
-
-		if ( kbhit() ){
-			//if it has the user has inputted something
-			override_flag = 1;
-		}
 
 		if ( override_flag == 1 ){
 			//as the input is 1 char, it needs to be added to the start of the input
 			program_status = status_input_read;
-			rxByte = getch();
-			input[0] = rxByte;
-			line[0] = rxByte;
-			//Write_Line(input);
-			printf(input);
 		}
 
 		 switch( program_status ){
 
-			case status_input_read:
-				//read in override input and handle it
-				Read_Line(line);
-
+			case status_input_read:				
 				if ( line[6] == '>' ){
 					//checking for correct format
 					for ( i = 0; line[i] != '\0'; i++ ){
@@ -183,7 +182,6 @@ void Run_State(){
 
 			case status_running:
 
-				//Update_LEDs();
 				for ( servo_number = 0; servo_number < NUM_SERVOS; servo_number++ ){
 
 					if ( servos[servo_number].servo_state == state_running ){
@@ -206,10 +204,9 @@ void Run_State(){
 						}
 					}
 
-					else if ( USART2->ISR & 0x20 == 0x20 ){
-						//if the RXNE interrupt has been flagged, user has input something
-						override_flag = 1;
-						line[0] = USART_Read(USART2);
+					else if ( override_flag == 1 ){
+						//user has input something
+						program_status = status_input_read;
 						}
 
 					else{
