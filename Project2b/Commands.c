@@ -12,7 +12,7 @@ int override_flag = 0;
 int wait_time = 1;
 int in_loop[2] = {0, 0};
 enum status program_status = status_running;
-char line[256];
+char line[10];
 char output[50];
 
 char rxByte;
@@ -62,6 +62,7 @@ char recipe_descend[100] =
 	MOV | 2,
 	MOV | 1,
 	MOV | 0,
+	MOV | 1,
 	RECIPE_END
 };
 
@@ -103,41 +104,37 @@ void Init_Servos(){
 	}
 }
 
-/*void Read_Line(char *str){
-
-	int index = 1;
-	while( input_byte != '>' ){
-		input_byte = getch();
-		if ( input_byte == 'x' || input_byte == 'X' ){
-			break;
-		}
-		str[index] = input_byte;
-		index++;
-	}
-	str[index++] = '\0';
-	Write_Line("\r\n>");
-}*/
-
 void Move_Buffering( int moves ){
 
-	int delay = ( moves ) * 400;
+	int delayTime = ( moves ) * 400;
 	// set delay of 400ms per movement to milliseconds
 	//	sprintf(output, "waiting %lu \r\n", delay);
 	//	Write_Line(output);
-	delay( delay );
-	program_status = status_running;
+	delay( delayTime );
+}
 
+void Clear_Input_Buffer(){
+	int i = 0;
+	while(line[i] != '\0'){
+		line[i] = '\0';
+	}
 }
 
 void *Override_Thread(){
     int index = 0;
+    int c;
     while(1){
-        while( c != '>' || c != 'x' ) {
-	    c = getchar();
+        index = 0;
+        while( (c = getchar()) != '\n' ) {
             line[index] = c;
+            index++;
+            if ( c == 'x' || c == 'X'){
+            	break;
+            }
         }
-	line[index++] = '\0'
-        input_fed = 1;
+        line[10] = '\0';
+        printf("line is %s", line);
+        override_flag = 1;
     }
 }
 
@@ -156,13 +153,13 @@ void Run_State(){
 
 		 switch( program_status ){
 
-			case status_input_read:				
+			case status_input_read:
 				if ( line[6] == '>' ){
 					//checking for correct format
 					for ( i = 0; line[i] != '\0'; i++ ){
 						if (line[i] == 'x' || line[i] == 'X'){
 							//if x is in the input, the override is cancelled
-							Write_Line("\r\n>");
+							printf("\r\n>");
 							servos[0].servo_state = state_running;
 							servos[1].servo_state = state_running;
 							override_flag = 0;
@@ -176,7 +173,11 @@ void Run_State(){
 						}
 
 					}
+				printf("\r\n>");
 				override_flag = 0;
+				//clear override flag
+				fflush(stdout);
+				Clear_Input_Buffer();
 				program_status = status_running;
 
 
@@ -215,6 +216,8 @@ void Run_State(){
 				}
 			 case status_buffering:
 				 Move_Buffering(wait_time);
+				 wait_time = 0;
+				 program_status = status_running;
 		}
 	}
 }
@@ -226,17 +229,18 @@ void process_recipe( int index_number, int servo ){
 	int opcode;
 
 	if ( servo == 0 ){
-		temp = recipe_command[index_number];
+		//if its servo 0
+		temp = recipe1[index_number];
 	}
 	else if ( servo == 1 ){
-
-		temp = recipe_descend[index_number];
+		// or servo 1
+		temp = recipe_loop[index_number];
 	}
 
 	opcode = temp >> 5;
 	//shifting the recipe 5 bits to get just the opcode
 
-	if ( opcode == 1 ){
+	if ( opcode == OP_MOV ){
 		// MOV opcode - moves the servo to the specified position
 		int pulse_width;
 		int delay_cycles;
@@ -252,6 +256,9 @@ void process_recipe( int index_number, int servo ){
 		//	sprintf(output, "moving servo %d to %d\r\n", servo, servos[servo].position);
 		//	Write_Line(output);
 		pulse_width = SMALLEST_WIDTH + value*STEP_INTERVAL;
+		if ( pulse_width < SMALLEST_WIDTH ){
+			pulse_width = SMALLEST_WIDTH;
+		}
 
 		Change_Width( pulse_width, servo );
 		//	sprintf(output, "servo moving %d positions\r\n", delay_cycles);
@@ -261,21 +268,21 @@ void process_recipe( int index_number, int servo ){
 
 	}
 
-	else if ( opcode == 2 ){
+	else if ( opcode == OP_WAIT ){
 		//WAIT opcode
-		long delay;
+		long delayTime;
 		temp &= 0x1F;
 		value = temp;
 
 		value++;
 		//wait 0 is a wait of 1 cycle so the value must be adjusted
 
-		delay = value*100000;
-		USART_Delay(delay);
+		delayTime = value*100;
+		delay(delayTime);
 
 		}
 
-	else if ( opcode == 4 ){
+	else if ( opcode == OP_LOOP ){
 		//LOOP opcode
 		//save current index
 		temp &= 0x1F;
@@ -289,7 +296,7 @@ void process_recipe( int index_number, int servo ){
 		in_loop[servo] = 1;
 	}
 
-	else if ( opcode == 5 ){
+	else if ( opcode == OP_END_LOOP ){
 		//END_LOOP opcode
 		//set index to index of the loop
 		//if loop counter is = to value, dont change index
@@ -315,7 +322,7 @@ void process_recipe( int index_number, int servo ){
 		}
 	}
 
-	else if ( opcode == 0 ){
+	else if ( opcode == RECIPE_END ){
 		//end of recipe opcode
 		servos[servo].servo_state = state_recipe_end;
 
@@ -393,7 +400,11 @@ void Turn_Left( int servo ){
 	servos[servo].position++;
 	//	sprintf(output, "moving servo %d left to %d\r\n", servo, servos[servo].position);
 	//	Write_Line(output);
-	Change_Width( pulse_width, servo ); // need to change this to the QNX version
+	pulse_width = SMALLEST_WIDTH + servos[servo].position*STEP_INTERVAL;
+	if ( pulse_width < SMALLEST_WIDTH ){
+		pulse_width = SMALLEST_WIDTH;
+	}
+	Change_Width( pulse_width, servo );
 }
 
 void Turn_Right( int servo ){
@@ -401,7 +412,10 @@ void Turn_Right( int servo ){
 	servos[servo].position--;
 	//	sprintf(output, "moving servo %d right to %d\r\n", servo, servos[servo].position);
 	//	Write_Line(output);
-	Change_Width( pulse_width, servo ); // need to change this to the QNX version
+	pulse_width = SMALLEST_WIDTH + servos[servo].position*STEP_INTERVAL;
+	if ( pulse_width < SMALLEST_WIDTH ){
+		pulse_width = SMALLEST_WIDTH;
+	}
+	Change_Width( pulse_width, servo );
 }
-
 

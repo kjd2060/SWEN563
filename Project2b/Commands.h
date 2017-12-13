@@ -15,15 +15,23 @@
 #define COMMANDS_H
 
 #include "commands.h"
+#include "timer.h"
 #include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
 
 #define MOV (0x20)
 #define WAIT (0x40)
 #define LOOP (0x80)
 #define END_LOOP (0xA0)
 #define RECIPE_END (0)
-#define STEP_INTERVAL (320)
-#define SMALLEST_WIDTH (400)
+#define OP_MOV (1)
+#define OP_WAIT (2)
+#define OP_LOOP (4)
+#define OP_END_LOOP (5)
+
+#define SMALLEST_WIDTH (420000)
+#define STEP_INTERVAL (320000)
 #define DEFAULT_STATE (3)
 #define NUM_SERVOS (2)
 

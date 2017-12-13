@@ -1,19 +1,22 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <timer.h>
+#include "Commands.h"
+
+#include <unistd.h>
+#include <time.h>
+
+
+#define BASE (0x280)  // default base address
 
 int main(int argc, char *argv[]) {
 
-	//this shit doesnt work dont build it
-	System_Clock_Init();
-	UART2_Init();
-
-	LED_Init();
-	Timer_Init();
-	Start_Timer();
+	pwmInit();
+	sleep(2);
 	Init_Servos();
-	//Change_Width(2000,1);
-	//Change_Width(2000,0);
-	Move_Buffering(5);
 	Run_State();
+	sleep(400);
+	return 0;
 
 }
+
